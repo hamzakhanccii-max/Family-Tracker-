@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+<title>Family Tracker</title>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, Roboto, Arial, sans-serif;
+    background: #f2f4f7;
+  }
+
+  #setupScreen {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    padding: 24px;
+    text-align: center;
+  }
+  #setupScreen h1 { margin-bottom: 4px; }
+  #setupScreen p { color: #667085; margin-top: 0; }
+  #setupScreen input {
+    width: 100%;
+    max-width: 320px;
+    padding: 14px;
+    margin: 8px 0;
+    border: 1px solid #d0d5dd;
+    border-radius: 10px;
+    font-size: 16px;
+  }
+  #setupScreen button {
+    width: 100%;
+    max-width: 320px;
+    padding: 14px;
+    margin-top: 12px;
+    background: #2563eb;
+    color: white;
+    border: none;
+    border-radius: 10px;
+    font-size: 16px;
+    font-weight: 600;
+  }
+
+  #app { display: none; height: 100vh; flex-direction: column; }
+
+  #topBar {
+    background: #101828;
+    color: white;
+    padding: 10px 14px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 14px;
+  }
+  #topBar button {
+    background: transparent;
+    color: #f97066;
+    border: 1px solid #f97066;
+    border-radius: 8px;
+    padding: 6px 10px;
+    font-size: 13px;
+  }
+
+  #map { flex: 1; width: 100%; }
+
+  #sosBtn {
+    position: fixed;
+    bottom: 190px;
+    right: 16px;
+    background: #d92d20;
+    color: white;
+    border: none;
+    border-radius: 50%;
+    width: 64px;
+    height: 64px;
+    font-weight: 700;
+    font-size: 14px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    z-index: 500;
+  }
+
+  #alertBanner {
+    display: none;
+    background: #d92d20;
+    color: white;
+    padding: 10px 14px;
+    font-size: 14px;
+    font-weight: 600;
+    text-align: center;
+  }
+
+  #bottomPanel {
+    background: white;
+    max-height: 40vh;
+    overflow-y: auto;
+    border-top: 1px solid #e4e7ec;
+  }
+  .memberRow {
+    padding: 12px 14px;
+    border-bottom: 1px solid #f2f4f7;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .memberRow .name { font-weight: 600; }
+  .memberRow .time { font-size: 12px; color: #667085; }
+  .memberRow button {
+    background: #eef2ff;
+    color: #2563eb;
+    border: none;
+    border-radius: 8px;
+    padding: 6px 10px;
+    font-size: 12px;
+  }
+
+  #historyPanel {
+    display: none;
+    background: white;
+    max-height: 35vh;
+    overflow-y: auto;
+    border-top: 1px solid #e4e7ec;
+    padding: 10px 14px;
+  }
+  #historyPanel .hRow { font-size: 13px; padding: 6px 0; border-bottom: 1px solid #f2f4f7; }
+  #historyPanel h3 { margin: 0 0 8px 0; font-size: 15px; display:flex; justify-content:space-between; }
+  #historyPanel button.close { background:none; border:none; color:#2563eb; font-size:13px; }
+</style>
+</head>
+<body>
+
+<div id="setupScreen">
+  <h1>👨‍👩‍👧‍👦 Family Tracker</h1>
+  <p>Sab members isi Family Code se join karein</p>
+  <input id="familyCodeInput" placeholder="Family Code (e.g. KHAN-FAM-2026)" />
+  <input id="nameInput" placeholder="Aapka Naam" />
+  <button onclick="joinFamily()">Family Group Join Karein</button>
+</div>
+
+<div id="app">
+  <div id="topBar">
+    <span id="topInfo">Family: —</span>
+    <button onclick="leaveFamily()">Leave</button>
+  </div>
+
+  <div id="alertBanner"></div>
+
+  <div id="map"></div>
+
+  <button id="sosBtn" onclick="sendSOS()">🆘 SOS</button>
+
+  <div id="historyPanel">
+    <h3><span id="historyName"></span><button class="close" onclick="closeHistory()">Close ✕</button></h3>
+    <div id="historyList"></div>
+  </div>
+
+  <div id="bottomPanel"><div id="memberList"></div></div>
+</div>
+
+<script>
+const firebaseConfig = {
+  apiKey: "AIzaSyDlQ0X5H3CLs9yigCgXUSGlZqmDhCiiX6I",
+  authDomain: "family-tracker-b96af.firebaseapp.com",
+  databaseURL: "https://family-tracker-b96af-default-rtdb.firebaseio.com",
+  projectId: "family-tracker-b96af",
+};
+
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+
+let familyCode = "";
+let myName = "";
+let myId = "";
+let map, markers = {}, watchId = null;
+let selectedHistoryMember = null;
+let appStartTime = Date.now();
+
+window.onload = () => {
+  const saved = localStorage.getItem("familyTracker");
+  if (saved) {
+    const data = JSON.parse(saved);
+    document.getElementById("familyCodeInput").value = data.familyCode || "";
+    document.getElementById("nameInput").value = data.name || "";
+  }
+};
+
+function joinFamily() {
+  const code = document.getElementById("familyCodeInput").value.trim();
+  const name = document.getElementById("nameInput").value.trim();
+  if (!code || !name) {
+    alert("Family Code aur Naam dono likhein");
+    return;
+  }
+  familyCode = code.replace(/[.#$\[\]]/g, "_");
+  myName = name;
+  myId = name.replace(/[.#$\[\]\s]/g, "_") + "_" + Math.floor(Math.random() * 1000);
+
+  localStorage.setItem("familyTracker", JSON.stringify({ familyCode: code, name }));
+
+  document.getElementById("setupScreen").style.display = "none";
+  document.getElementById("app").style.display = "flex";
+  document.getElementById("topInfo").textContent = "Family: " + code + " | Aap: " + name;
+
+  initMap();
+  startLocationSharing();
+  listenToMembers();
+  listenToAlerts();
+}
+
+function leaveFamily() {
+  if (watchId) navigator.geolocation.clearWatch(watchId);
+  db.ref("families/" + familyCode + "/members/" + myId).remove();
+  location.reload();
+}
+
+function initMap() {
+  map = L.map("map").setView([30.3753, 69.3451], 5);
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    attribution: "&copy; OpenStreetMap contributors",
+  }).addTo(map);
+}
+
+function upsertMarker(id, name, lat, lng, isSOS) {
+  const color = isSOS ? "red" : "#2563eb";
+  const icon = L.divIcon({
+    className: "",
+    html: `<div style="background:${color};color:white;padding:4px 8px;border-radius:12px;font-size:12px;font-weight:600;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,0.3)">${name}</div>`,
+    iconAnchor: [20, 10],
+  });
+  if (markers[id]) {
+    markers[id].setLatLng([lat, lng]);
+    markers[id].setIcon(icon);
+  } else {
+    markers[id] = L.marker([lat, lng], { icon }).addTo(map);
+  }
+}
+
+function startLocationSharing() {
+  if (!navigator.geolocation) {
+    alert("Ye browser location share nahi kar sakta");
+    return;
+  }
+  watchId = navigator.geolocation.watchPosition(
+    (pos) => {
+      const lat = pos.coords.latitude;
+      const lng = pos.coords.longitude;
+      const now = Date.now();
+
+      db.ref("families/" + familyCode + "/members/" + myId).set({
+        name: myName,
+        lat, lng,
+        updatedAt: now,
+      });
+
+      const lastHistTime = window._lastHistTime || 0;
+      if (now - lastHistTime > 5 * 60 * 1000) {
+        window._lastHistTime = now;
+        db.ref("families/" + familyCode + "/history/" + myId).push({
+          lat, lng, time: now,
+        });
+      }
+
+      map.setView([lat, lng], map.getZoom() < 10 ? 14 : map.getZoom());
+    },
+    (err) => {
+      alert("Location error: " + err.message + "\nLocation permission allow karein.");
+    },
+    { enableHighAccuracy: true, maximumAge: 10000, timeout: 20000 }
+  );
+}
+
+function listenToMembers() {
+  db.ref("families/" + familyCode + "/members").on("value", (snap) => {
+    const data = snap.val() || {};
+    const listDiv = document.getElementById("memberList");
+    listDiv.innerHTML = "";
+
+    Object.keys(data).forEach((id) => {
+      const m = data[id];
+      upsertMarker(id, m.name, m.lat, m.lng, false);
+
+      const mins = Math.floor((Date.now() - m.updatedAt) / 60000);
+      const timeStr = mins < 1 ? "Abhi" : mins + " min pehle";
+
+      const row = document.createElement("div");
+      row.className = "memberRow";
+      row.innerHTML = `
+        <div>
+          <div class="name">${m.name}${id === myId ? " (Aap)" : ""}</div>
+          <div class="time">Update: ${timeStr}</div>
+        </div>
+        <button onclick="showHistory('${id}','${m.name}')">History</button>
+      `;
+      listDiv.appendChild(row);
+    });
+  });
+}
+
+function showHistory(id, name) {
+  selectedHistoryMember = id;
+  document.getElementById("historyName").textContent = name + " ki History";
+  document.getElementById("historyPanel").style.display = "block";
+
+  db.ref("families/" + familyCode + "/history/" + id)
+    .limitToLast(20)
+    .once("value", (snap) => {
+      const data = snap.val() || {};
+      const listDiv = document.getElementById("historyList");
+      listDiv.innerHTML = "";
+      const entries = Object.values(data).sort((a, b) => b.time - a.time);
+
+      if (entries.length === 0) {
+        listDiv.innerHTML = "<p style='color:#667085'>Abhi koi history nahi hai.</p>";
+        return;
+      }
+
+      entries.forEach((e) => {
+        const d = new Date(e.time);
+        const row = document.createElement("div");
+        row.className = "hRow";
+        row.textContent = d.toLocaleString() + " — " + e.lat.toFixed(5) + ", " + e.lng.toFixed(5);
+        listDiv.appendChild(row);
+      });
+    });
+}
+
+function closeHistory() {
+  document.getElementById("historyPanel").style.display = "none";
+}
+
+function sendSOS() {
+  if (!confirm("Emergency alert sabhi family members ko bhejni hai?")) return;
+
+  navigator.geolocation.getCurrentPosition((pos) => {
+    db.ref("families/" + familyCode + "/alerts").push({
+      name: myName,
+      lat: pos.coords.latitude,
+      lng: pos.coords.longitude,
+      time: Date.now(),
+    });
+    alert("SOS alert bhej diya gaya!");
+  });
+}
+
+function listenToAlerts() {
+  db.ref("families/" + familyCode + "/alerts")
+    .orderByChild("time")
+    .startAt(appStartTime)
+    .on("child_added", (snap) => {
+      const a = snap.val();
+      if (a.name === myName) return;
+
+      const banner = document.getElementById("alertBanner");
+      banner.style.display = "block";
+      banner.textContent = "🆘 " + a.name + " ne SOS bheja hai! Tap karein location dekhne ke liye.";
+      banner.onclick = () => map.setView([a.lat, a.lng], 16);
+
+      upsertMarker("sos_" + snap.key, a.name + " (SOS)", a.lat, a.lng, true);
+
+      if (navigator.vibrate) navigator.vibrate([300, 100, 300]);
+    });
+}
+</script>
+</body>
+  </html>
